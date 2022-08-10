@@ -39,8 +39,8 @@ def deleteROIs(conn, ids):
             for roi in result :
                 roi_ids.append(roi.getId())
                 rois_removed.append(roi.getId())
-            print("ROIs removed for Image#" + str(id) + ": " + str(roi_ids))
             conn.deleteObjects("Roi", roi_ids)
+            print("ROIs removed for Image#" + str(id) + " : " + str(roi_ids))
         except AttributeError:
             print("no rois found for " + str(id))
     if rois_removed == [] :
