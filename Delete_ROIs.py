@@ -39,6 +39,7 @@ def deleteROIs(conn, ids):
             for roi in result :
                 roi_ids.append(roi.getId())
                 rois_removed.append(roi.getId())
+            print("ROIs removed for Image#" + str(id) + ": " + str(roi_ids))
             conn.deleteObjects("Roi", roi_ids)
         except AttributeError:
             print("no rois found for " + str(id))
@@ -46,7 +47,7 @@ def deleteROIs(conn, ids):
         client.setOutput("Message", rstring("Failed: No ROIs found"))
         exit()
     else :
-        print("ROIs Removed: " + rois_removed)
+        print("ROIs Removed: " + str(rois_removed))
 
 
 
@@ -97,7 +98,7 @@ if __name__ == "__main__":
 
     except Exception as e:
         print(e)
-        client.setOutput("Message", rstring("Failed:"))
+        client.setOutput("Message", rstring("Failed"))
 
     finally:
         client.closeSession()
