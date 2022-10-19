@@ -5,40 +5,70 @@ This script runs HistoQC modules based on provided config file, served through o
 
 import numpy as np
 from omero.rtypes import rlong, rstring
-from omero.gateway import BlitzGateway, ImageWrapper
+from omero.gateway import BlitzGateway
 import omero.scripts as scripts
+# mirrors a given list of tiles
+def flipImg(pixSource, pid, tileList, axis):
+    sizeX, sizeY = pixSource.getSizeX(), pixSource.getSizeX()
+    rps=pixSource._conn.createRawPixelsStore()
+    i=0
+    for tile in pixSource.getTiles(tileList):
+        rps.setPixelsId(pid,False)
+        tile=np.flip(tile, axis)
 
-def flipPlane(pix, z , c, t, horizontalBool):
-    width, height=pix.getSizeX(), pix.getSizeY()
-    tileSize=pix.getTileSize()
-    plane=np.empty((height,width), dtype=np.uint8)
-    for y in range(0,height,tileSize[1]):
-        for x in range(0,width,tileSize[0]):
-            plane[y:y+tileSize[1]][x:x+tileSize[0]]=pix.getTile(z,c,t(x,y,width,height))
+        z,c,t,xywh=tileList[i]
+        x,y,w,h=xywh
+        print(rps.getPixelsId())
+        print(tile)
+        # gotta flip tile pos too
+        if axis == 1: # ^-v
+            rps.setTile(tile.tobytes(), z, c, t, x, (sizeY-y),w,h)
+        else: # <->
+            rps.setTile(tile.tobytes(), z, c, t, (sizeX-x),y,w,h)
+
+        i+=1 
 
 
-    return np.flip(plane, axis=horizontalBool)
-def flipImage(pix, zct, horizontalBool):
-    for z in range(zct[0]): # each layer
-        for c in range(zct[1]): # each channel
-            for t in range(zct[2]): # each time point 
-                yield flipPlane(pix,z,c,t,horizontalBool)
+# flips everything under a given image
+def flipSeries(img, axis): #((z,c,t),(x,y))
 
-def generateList(zct,tileSize): #((z,c,t),(x,y))
-    for z in range(zct[0]): # each layer
-        for c in range(zct[1]): # each channel
-            for t in range(zct[2]): # each time point 
-                for y in range(tileSize[1]): # height
-                    for x in range(tileSize[0]): # width
-                        appendtolist
-                yield list # list of all tiles at a zct point
-       
+    pix=img.getPrimaryPixels()
+    sizeX,sizeY,sizeZ,sizeC,sizeT=pix.getSizeX(),pix.getSizeY(),pix.getSizeZ(),pix.getSizeC(),pix.getSizeT()
+    channels=range(sizeC)
+    name='MIRRORED_'+img.getName()
+    desc = img.getDescription() + ' Mirrored using Flip_Image.py'
+
+    pixType=None
+    query=conn.getQueryService()
+    pixType=query.findByQuery(f"from PixelsType as p where p.value='{pix.getPixelsType().value}'", None)
+
+    newImgId=None
+    service=conn.getPixelsService()
+    newImgId=service.createImage(sizeX,sizeY,sizeZ,sizeT,channels,pixType, name, desc)
+    rps= img._conn.createRawPixelsStore() 
+    rps.setPixelsId(pix.getId(), False)
+    dim=rps.getResolutionDescriptions()[rps.getResolutionLevels()-1]
+    tileSize=rps.getTileSize()
+    tileList=getTileList((sizeZ,sizeC,sizeT),dim,tileSize)
+    flipImg(pix,newImgId._val,tileList,axis)
+
+    return newImgId._val
+
+def getTileList(zctSize, dim, tileSize):
+    tileList=[]
+    for z in range(zctSize[0]): # each layer
+        for c in range(zctSize[1]): # each channel
+            for t in range(zctSize[2]): # each time point 
+                for y in range(0,dim.sizeY,tileSize[1]):
+                    for x in range(0,dim.sizeX,tileSize[0]):
+                        tileList.append((z,c,t,(x,y,tileSize[0],tileSize[1])))
+    return tileList
 
 
 if __name__ == "__main__":
     flipDirections = [rstring('Horizontal'),rstring('Vertical')]
     client = scripts.client(
-        'HistoQC', """Runs HistoQCxOMERO with the given params""",
+        'Flip Image', """Flips a given set of images vertically or horizontally""",
         scripts.List("Image_Ids", optional=True, grouping="1",description="List of Image IDs to process.", default=None).ofType(rlong(0)),
         scripts.List("Dataset_Ids", optional=True, grouping="2",description="List of Dataset IDs to process.", default=None).ofType(rlong(0)),
         scripts.List("Project_Ids", optional=True, grouping="3",description="List of Project IDs to process.", default=None).ofType(rlong(0)),
@@ -74,7 +104,7 @@ if __name__ == "__main__":
                 ids.append(id)
 
         # set flip direction
-        flipDir = True if orientation == "Horizontal" else False
+        axis = True if orientation == "Horizontal" else False
 
         # check and report perms
         group = conn.getGroupFromContext()
@@ -88,18 +118,13 @@ if __name__ == "__main__":
         print("Permissions: %s (%s)" % (permission_names[perm_string], perm_string))
         if permission_names[perm_string] != 'READ-WRITE':
             client.setOutput("Message", rstring("Failed, Required write permission."))
-            #exit(1)
+            exit(1)
 
-        # generate and upload flipped images
+        # flip each requested image
         for id in ids:
             img=conn.getObject('Image', id)
-            pixels=img.getPrimaryPixels()
-            desc = "Image created from a hard-coded arrays"
-            zct=(img.getSizeZ(), img.getSizeC(), img.getSizeT())
-            ds=img.getParent() if img.getParent() != None else "Mirrored"
-            i=conn.createImageFromNumpySeq(
-                flipImage(img.getPrimaryPixels(), zct, flipDir),"test", sizeZ=zct[0],sizeC=zct[1],sizeT=zct[2], description=desc, dataset=img.getParent()) 
-            print('Created new Image:%s Name:"%s"' % (i.getId(), i.getName()))
+            newId=flipSeries(img, axis)
+            print('Mirrored Image: %s, %sly' % (img.getName(), orientation))
         client.setOutput("Message", rstring("Success")) 
 
     except Exception as e:
